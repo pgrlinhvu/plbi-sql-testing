@@ -1,0 +1,221 @@
+Here is the query to create Policy_Fact table/view on PL_CONTROL_PROPERTY.TARGET on Snowflake
+
+CREATE OR REPLACE VIEW PL_CONTROL_PROPERTY.TARGET.PropertyHome_Policy_FactTable_View AS
+SELECT 
+    Channel, 
+    SubChannel, 
+    Product, 
+    RiskType, 
+    PolicyState, 
+    ST_CD, 
+    PolicyTerm, 
+    CAST(ProcDate AS DATE) AS ProcDate,
+    PartnerCode,
+    PlanID,
+    PolicySource,
+    OnlineBuyFlag, 
+    BillPlanName,
+    NumberPayments, 
+    ASIAgentID,
+    ProgAgentID,
+    MaritalStatus,
+    CV_TERR_CD,
+    PL_TERR_CD,
+    CreditScoreGrp,
+    AccountType,
+    GroupName,
+    Source,
+    eSignInd,
+    TerritoryID, 
+    ProtectionClass, 
+    ConstructionType,
+    FlatDelInd,
+    NA_MAP_Ind,
+    PolReinstateInd,
+    PolRenewalOfferInd,
+
+    -- Calculations based on conditions
+    SUM(CASE WHEN (A.PolicyTermEffectiveDate<='03/30/2023' AND A.PolicyTermStopDate>'03/30/2023')THEN 1 ELSE 0 
+        END) AS BeginPIFCnt
+   ,SUM(CASE WHEN (A.PolicyTermEffectiveDate='03/31/2023' AND A.PolicyTerm=0) THEN 1 ELSE 0 END) AS NBAppCnt
+   ,SUM(CASE WHEN (A.PolicyTermEffectiveDate='03/31/2023' AND A.PolicyTerm>0) THEN 1 ELSE 0 END) AS RBAppCnt
+   ,SUM(CASE WHEN (A.PolicyTermEffectiveDate='03/31/2023' AND A.PolicyTerm>0 AND 
+          PREV_STOP_DT=PolicyTermEffectiveDate) THEN 1 
+          ELSE 0 END) AS RBAppCntwithnoLapse
+   ,SUM(CASE WHEN (A.PolicyTermEffectiveDate='03/31/2023' AND A.PolicyTerm>0 AND 
+         PREV_STOP_DT<>PolicyTermEffectiveDate) THEN 1 
+        ELSE 0 END) AS RBAppCntwithLapse
+   ,SUM(CASE WHEN (A.PolicyTermEffectiveDate<='03/31/2023' AND A.PolicyTermStopDate>'03/31/2023')THEN 1 ELSE 0 
+        END) AS EndPIFCnt
+   ,SUM(CASE WHEN (A.PolicyTermStopDate='03/31/2023' AND A.PolicyTermStopDate<>A.PolicyTermExpirationDate) THEN 1 
+       ELSE 0 END) AS CancelCnt
+   ,SUM(CASE WHEN (A.PolicyTermStopDate='03/31/2023' AND A.PolicyTermStopDate=A.PolicyTermExpirationDate) THEN 1 
+       ELSE 0 END) AS ExpiredPolCnt
+   ,SUM(FullTermPremiumAmount) AS WP
+   ,SUM(CASE WHEN (A.PolicyTermEffectiveDate='03/31/2023' AND A.PolicyTerm=0) THEN A.FullTermPremiumAmount ELSE 0 
+       END) AS NBAppWP
+   ,SUM(CASE WHEN (A.PolicyTermEffectiveDate='03/31/2023' AND A.PolicyTerm>0) THEN A.FullTermPremiumAmount ELSE 0 
+       END) AS RBAppWP
+   ,SUM(CASE WHEN (A.PolicyTermStopDate='03/31/2023' AND A.PolicyTermStopDate<>A.PolicyTermExpirationDate) 
+       THEN A.FullTermPremiumAmount ELSE 0 END) AS CancelWP
+FROM 
+(
+
+SELECT 
+        A.PolicyNbr, 
+        A.Channel, 
+        A.SubChannel, 
+        A.Product, 
+        A.RiskType, 
+        A.PolicyState, 
+        S.ST_CD,
+        CASE WHEN A.PolicyRenewalCnt < 0 THEN 0 
+             WHEN A.PolicyRenewalCnt > 20 THEN 20 
+             ELSE A.PolicyRenewalCnt END AS PolicyTerm,
+        TO_CHAR(A.PolicyTermEffectiveDate,'MM/DD/YYYY') AS PolicyTermEffectiveDate, 
+        TO_CHAR(A.PolicyTermExpirationDate,'MM/DD/YYYY') AS PolicyTermExpirationDate, 
+        TO_CHAR(A.PolicyTermStopDate,'MM/DD/YYYY') AS PolicyTermStopDate,
+        A.PartnerCode, 
+        A.PlanID, 
+        A.PolicySource, 
+        A.OnlineBuyFlag, 
+        A.BillPlanName,
+        --COALESCE(A.numberpayments, 99) AS NumberPayments,
+        (Case when A.numberpayments is null then 99 else A.numberpayments end) as NumberPayments,
+        A.eSignInd, 
+        A.FullTermPremiumAmount, 
+        A.ASIAgentID, 
+        A.ProgAgentID, 
+        A.MaritalStatus,
+        A.TerritoryID, 
+        A.ProtectionClass, 
+        A.ConstructionType,
+        CASE  WHEN B1.CV_TERR_CD IS NULL OR B1.CV_TERR_CD <= ' ' THEN NULL 
+        ELSE B1.CV_TERR_CD 
+        END AS CV_TERR_CD,
+
+        CASE WHEN B1.SALE_TERR_CD IS NULL OR B1.SALE_TERR_CD <= ' ' THEN NULL 
+        ELSE B1.SALE_TERR_CD 
+        END AS PL_TERR_CD,  
+        '03/31/2023' AS ProcDate,
+        CAST(A.CreditScoreGrp AS STRING) AS CreditScoreGrp, 
+        TO_CHAR(B.PolicyTermStopDate,'MM/DD/YYYY') AS PREV_STOP_DT,
+        CASE WHEN CAST(A.PolicyTermEffectiveDate AS DATE) = CAST(A.PolicyTermStopDate AS DATE) THEN 'Y' ELSE 
+        'N' END AS FlatDelInd,
+        AG.ACCOUNTTYPE, 
+        AG.GROUPNAME,  
+        --(Case when A.Channel='Direct' then 'D' When C.ASI_AGT_ID is not null then C.ASI_AGT_ID else 'N' end) 
+        -- as NA_MAP_Ind
+        --CASE WHEN A.Channel = 'Direct' THEN 'D' ELSE 'N' END AS NA_MAP_Ind,
+        (CASE WHEN A.Channel = 'Direct' THEN 'D' WHEN A.PROGAGENTID IS NOT NULL THEN A.PROGAGENTID ELSE 'N' END) AS NA_MAP_Ind,
+        CASE WHEN A.PolicyTermReinstateDate IS NOT NULL THEN 'Y' ELSE 'N' END AS PolReinstateInd,
+        CASE WHEN (TO_CHAR(A.Accountingdate,'MM/DD/YYYY') <= '01/01/1900' AND TO_CHAR(A.PaidDate,'MM/DD/YYYY') <= '01/01/1900' AND 
+        A.PolicyTermStopDate > A.PolicyTermEffectiveDate) THEN 'Y' ELSE 'N' END AS PolRenewalOfferInd,
+        A.Source
+        
+    FROM PL_CONTROL_PROPERTY.PUBLISHED.PROPERTYPOLICY  A 
+    LEFT OUTER JOIN PL_CONTROL_PROPERTY.PUBLISHED.DIMAGENCY_PGR  B1 ON A.PROGAGENTID = B1.AGT_NBR
+    INNER JOIN PL_CONTROL_PROPERTY.PUBLISHED.DIMAGENCYASI AG ON A.ASIAGENTID = AG.AGENTID
+    INNER JOIN COMMON_DIMENSION.TARGET.STATE S ON A.PolicyState=S.Alpha_St_Cd
+    LEFT OUTER JOIN PL_CONTROL_PROPERTY.PUBLISHED.PROPERTYPOLICY  B ON A.PolicyNbr = B.PolicyNbr 
+        AND A.PolicyState = B.PolicyState 
+        AND (A.PolicyRenewalCnt - 1) = B.PolicyRenewalCnt
+    WHERE A.PolicyState >= '' AND A.PolicyTermStopDate > '03/30/2023'
+
+    UNION ALL
+
+    -- Secondary query for PropertyPolicy_Flood
+    SELECT 
+        A.PolicyNbr, 
+        A.Channel, 
+        NULL AS SubChannel, 
+        A.Product, 
+        A.RiskType, 
+        A.PolicyState, 
+        S.ST_CD,
+        CASE WHEN A.PolicyRenewalCnt < 0 THEN 0 
+             WHEN A.PolicyRenewalCnt > 20 THEN 20 
+             ELSE A.PolicyRenewalCnt END AS PolicyTerm,
+        TO_CHAR(A.PolicyTermEffectiveDate,'MM/DD/YYYY') AS PolicyTermEffectiveDate, 
+        TO_CHAR(A.PolicyTermExpirationDate,'MM/DD/YYYY') AS PolicyTermExpirationDate, 
+        TO_CHAR(A.PolicyTermStopDate,'MM/DD/YYYY') AS PolicyTermStopDate,
+        A.PartnerCode, 
+        A.PlanID, 
+        NULL AS PolicySource, 
+        NULL AS OnlineBuyFlag, 
+        NULL AS BillPlanName,
+        --COALESCE(A.numberpayments, 99) AS NumberPayments,
+        (Case when A.numberpayments is null then 99 else A.numberpayments end) as NumberPayments,
+        A.eSignInd, 
+        A.FullTermPremAmt AS FullTermPremiumAmount, 
+        A.ASIAgentID, 
+        A.ProgAgentID, 
+        NULL AS MaritalStatus,
+        NULL AS TerritoryID, 
+        NULL AS ProtectionClass, 
+        NULL AS ConstructionType,
+        CASE WHEN B1.CV_TERR_CD IS NULL OR B1.CV_TERR_CD <= ' ' THEN NULL 
+        ELSE B1.CV_TERR_CD 
+        END AS CV_TERR_CD,
+
+        CASE WHEN B1.SALE_TERR_CD IS NULL OR B1.SALE_TERR_CD <= ' ' THEN NULL 
+        ELSE B1.SALE_TERR_CD 
+        END AS PL_TERR_CD,    
+        '03/31/2023' AS ProcDate,
+        '' AS CreditScoreGrp, 
+        TO_CHAR(B.PolicyTermStopDate,'MM/DD/YYYY') AS PREV_STOP_DT,
+        CASE WHEN CAST(A.PolicyTermEffectiveDate AS DATE) = CAST(A.PolicyTermStopDate AS DATE) THEN 'Y' ELSE 
+        'N' END AS FlatDelInd,
+        AG.ACCOUNTTYPE,  
+        AG.GROUPNAME,  
+        --CASE WHEN A.Channel = 'Direct' THEN 'D' ELSE 'N' END AS NA_MAP_Ind,
+        (CASE WHEN A.Channel = 'Direct' THEN 'D' WHEN A.PROGAGENTID IS NOT NULL THEN A.PROGAGENTID ELSE 'N' END) AS NA_MAP_Ind,
+        'N' AS PolReinstateInd,
+        CASE WHEN (A.Accountingdate <= '01/01/1900' AND A.PaidDate <= '01/01/1900' AND A.PolicyTermStopDate > 
+         A.PolicyTermEffectiveDate) THEN 'Y' ELSE 'N' END AS PolRenewalOfferInd,
+        'PgrHome' AS Source
+        
+    FROM PL_CONTROL_PROPERTY.PUBLISHED.PROPERTYPOLICY_FLOOD  A
+    LEFT OUTER JOIN PL_CONTROL_PROPERTY.PUBLISHED.DIMAGENCY_PGR  B1 ON A.PROGAGENTID = B1.AGT_NBR
+    INNER JOIN PL_CONTROL_PROPERTY.PUBLISHED.DIMAGENCYASI AG ON A.ASIAGENTID = AG.AGENTID
+    INNER JOIN COMMON_DIMENSION.TARGET.STATE S ON A.PolicyState=S.Alpha_St_Cd
+    LEFT OUTER JOIN PL_CONTROL_PROPERTY.PUBLISHED.PROPERTYPOLICY_FLOOD  B ON A.PolicyNbr = B.PolicyNbr 
+        AND A.PolicyState = B.PolicyState 
+        AND (A.PolicyRenewalCnt - 1) = B.PolicyRenewalCnt
+    WHERE A.PolicyState >= '' AND A.PolicyTermStopDate > '03/30/2023'
+
+    )
+    AS A
+
+    GROUP BY 
+    Channel, 
+    SubChannel, 
+    Product, 
+    RiskType, 
+    PolicyState, 
+    ST_CD, 
+    PolicyTerm, 
+    ProcDate,
+    PartnerCode, 
+    PlanID, 
+    PolicySource, 
+    OnlineBuyFlag, 
+    BillPlanName, 
+    NumberPayments, 
+    ASIAgentID, 
+    ProgAgentID, 
+    MaritalStatus, 
+    CV_TERR_CD, 
+    PL_TERR_CD, 
+    CreditScoreGrp, 
+    AccountType, 
+    GroupName, 
+    Source,
+    eSignInd, 
+    TerritoryID, 
+    ProtectionClass, 
+    ConstructionType, 
+    FlatDelInd, 
+    NA_MAP_Ind, 
+    PolReinstateInd, 
+    PolRenewalOfferInd;
